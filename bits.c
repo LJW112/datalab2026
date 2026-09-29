@@ -19,7 +19,7 @@
  * Difficulty: 1
  */
 int bitAnd(int x, int y) {
-    return 2;
+    return ~(~x | ~y);
 }
 
 /*
@@ -30,7 +30,7 @@ int bitAnd(int x, int y) {
  *   Difficulty: 1
  */
 int bitXor(int x, int y) {
-    return 2;
+    return ~(~x & ~y) & ~(x & y);
 }
 
 /*
@@ -50,7 +50,11 @@ int bitXor(int x, int y) {
  *   1 if x and y have the same sign , 0 otherwise.
  */
 int samesign(int x, int y) {
-    return 2;
+/* same class means: same sign-bit AND same zero-ness.
+       0 is its own class (not positive, not negative). */
+    int sameSign = !((x >> 31) ^ (y >> 31)); /* 1 if same sign bit */
+    int sameZero = !(!x ^ !y);               /* 1 if both zero or both nonzero */
+    return sameSign && sameZero;
 }
 
 /*
@@ -63,7 +67,17 @@ int samesign(int x, int y) {
  *   Difficulty: 4
  */
 int logtwo(int v) {
-    return 2;
+    int result = 0;
+    int c;
+    /* binary search for the highest set bit. The boolean (x>0) is 0 or 1,
+       so c = ((x>>k)>0)<<m is either 2^m or 0, used both as the accumulated
+       count and as the right-shift amount for v. */
+    c = ((v >> 16) > 0) << 4;   result |= c;  v >>= c;
+    c = ((v >> 8)  > 0) << 3;   result |= c;  v >>= c;
+    c = ((v >> 4)  > 0) << 2;   result |= c;  v >>= c;
+    c = ((v >> 2)  > 0) << 1;   result |= c;  v >>= c;
+    c = (v > 1);                result |= c;
+    return result;
 }
 
 /*
@@ -76,7 +90,15 @@ int logtwo(int v) {
  *    Difficulty: 2
  */
 int byteSwap(int x, int n, int m) {
-    return 2;
+    int nshift = n << 3;             /* shift amount for byte n */
+    int mshift = m << 3;             /* shift amount for byte m */
+    int nbyte = (x >> nshift) & 0xFF;/* extract byte n */
+    int mbyte = (x >> mshift) & 0xFF;/* extract byte m */
+    /* XOR trick: diff has 1-bits where the two bytes differ */
+    int diff = nbyte ^ mbyte;
+    x = x ^ (diff << nshift);
+    x = x ^ (diff << mshift);
+    return x;
 }
 
 /*
@@ -88,8 +110,16 @@ int byteSwap(int x, int n, int m) {
  *   Difficulty: 3
  */
 unsigned reverse(unsigned v) {
-    return 2;
+    unsigned i = 32;
+    unsigned r = 0;
+    while (i) {
+        r = (r << 1) | (v & 1);  /* take v's lowest bit */
+        v >>= 1;                  /* expose the next bit */
+        i -= 1;
+    }
+    return r;
 }
+
 
 /*
  * logicalShift - shift x to the right by n, using a logical shift
@@ -100,7 +130,10 @@ unsigned reverse(unsigned v) {
  *   Difficulty: 3
  */
 int logicalShift(int x, int n) {
-    return 2;
+    /* arithmetic shift then mask off the sign-extension bits */
+    int shifted = x >> n;
+    int mask = ~(((1 << 31) >> n) << 1);
+    return shifted & mask;
 }
 
 /*
@@ -112,7 +145,18 @@ int logicalShift(int x, int n) {
  *   Difficulty: 4
  */
 int leftBitCount(int x) {
-    return 2;
+/* Binary search: a block of leading bits in x is all 1s iff the same
+       block of ~x is all 0s. Each level adds 16,8,4,2,1 leading ones and
+       shifts x left so the next block moves into the top position. */
+    int result = 0;
+    int cond;
+    cond = (!((~x) >> 16)) << 4;  result += cond;  x <<= cond;
+    cond = (!((~x) >> 24)) << 3;  result += cond;  x <<= cond;
+    cond = (!((~x) >> 28)) << 2;  result += cond;  x <<= cond;
+    cond = (!((~x) >> 30)) << 1;  result += cond;  x <<= cond;
+    cond = (!((~x) >> 31));       result += cond;  x <<= cond;
+    result += (x >> 31) & 1;      /* the very last bit */
+    return result;
 }
 
 /*
@@ -124,8 +168,34 @@ int leftBitCount(int x) {
  *   Difficulty: 4
  */
 unsigned float_i2f(int x) {
-    return 2;
+    unsigned sign = 0;
+    unsigned abx = x;
+    unsigned exp, frac, t, pos;
+
+    if (x == 0) return 0;
+    if (x < 0) { sign = 0x80000000; abx = ~abx + 1; }
+
+    t = abx;
+    pos = 0;
+    while (t > 1) { t >>= 1; pos++; }
+
+    exp = pos + 127;
+
+    if (pos < 24) {
+        frac = (abx << (23 - pos)) & 0x7FFFFF;
+    } else {
+        unsigned drop = pos - 23;
+        unsigned rest = abx & ((1u << drop) - 1);
+        unsigned roundbit = 1u << (drop - 1);
+        frac = abx >> drop;
+        if (rest > roundbit) frac++;
+        else if (rest == roundbit) if (frac & 1) frac++;
+        if (frac & 0x1000000) { exp++; frac = 0; }
+        else frac = frac & 0x7FFFFF;
+    }
+    return sign | (exp << 23) | frac;
 }
+
 
 /*
  * floatScale2 - Return bit-level equivalent of expression 2*f for
@@ -139,7 +209,27 @@ unsigned float_i2f(int x) {
  *   Difficulty: 4
  */
 unsigned floatScale2(unsigned uf) {
-    return 2;
+    unsigned sign = uf & 0x80000000;
+    unsigned exp = (uf >> 23) & 0xFF;
+    unsigned frac = uf & 0x7FFFFF;
+
+    if (exp == 0xFF) return uf;      /* NaN or Inf: unchanged */
+
+    if (exp == 0) {
+        /* denormalized: double the fraction */
+        frac = frac << 1;
+        if (frac & 0x800000) {       /* spills into exponent -> min normal */
+            exp = 1;
+            frac = frac & 0x7FFFFF;  /* keep the tail, don't zero it */
+        }
+        return sign | (exp << 23) | frac;
+    } else {
+
+        /* normalized: increment exponent */
+        exp = exp + 1;
+        if (exp == 0xFF) return sign | 0x7F800000;  /* overflow -> Inf */
+        return sign | (exp << 23) | frac;
+    }
 }
 
 /*
@@ -156,7 +246,22 @@ unsigned floatScale2(unsigned uf) {
  *   Difficulty: 3
  */
 int float64_f2i(unsigned uf1, unsigned uf2) {
-    return 2;
+    unsigned sign = uf2 >> 31;
+    unsigned exp = (uf2 >> 20) & 0x7FF;
+    unsigned val = 0x80000000u | ((uf2 & 0xFFFFF) << 11) | (uf1 >> 21);
+
+    if (exp < 1023) return 0;             /* |value| < 1 */
+    if (exp > 1054) return 0x80000000u;   /* overflow sentinel */
+
+    val = val >> (1054 - exp);
+
+    if (sign) {
+        if (val > 0x80000000u) return 0x80000000u;
+        else return -val;
+    } else {
+        if (val > 0x7FFFFFFF) return 0x80000000u;
+        else return val;
+    }
 }
 
 /*
@@ -173,5 +278,12 @@ int float64_f2i(unsigned uf1, unsigned uf2) {
  *   Difficulty: 4
  */
 unsigned floatPower2(int x) {
-    return 2;
+    if (x < -149) return 0;            /* underflow to 0 */
+    if (x > 127) return 0x7F800000;    /* overflow to +INF */
+    if (x >= -126) {
+        unsigned e = x + 127;          /* implicit int->unsigned, no explicit cast */
+        return e << 23;                /* normal number */
+    } else {
+        return 1u << (23 + (x + 126)); /* denormal number */
+    }
 }
